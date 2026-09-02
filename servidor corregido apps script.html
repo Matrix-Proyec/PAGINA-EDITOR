@@ -1,0 +1,114 @@
+/**
+ * Servidor Comercial Automatizado - Edición visual de prensa
+ * Sistema de Autenticación Única, Auto-bloqueo y Control de Facturación Mensual ($10 USD)
+ * Año: 2026
+ */
+
+function doGet(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Usuarios");
+    if (!sheet) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Error interno: Pestaña 'Usuarios' no encontrada." })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var action = e.parameter.action;
+    var user = e.parameter.user ? e.parameter.user.trim() : "";
+    var pass = e.parameter.pass ? e.parameter.pass.trim() : "";
+
+    // 1. CONTROL REMOTO DE FACTURACIÓN: Leer celdas D1 y E1
+    var billingStatus = sheet.getRange("E1").getValue().toString().trim().toUpperCase();
+
+    // =========================================================================
+    // 🛡️ ACCIÓN ESPECIAL: COMPROBACIÓN AUTOMÁTICA AL CARGAR LA PÁGINA (INDEX)
+    // =========================================================================
+    if (action === "checkStatus") {
+      var data = sheet.getDataRange().getValues();
+      var hasUser = false;
+
+      // Evaluar si ya existe algún administrador registrado en la fila 2 en adelante
+      for (var i = 1; i < data.length; i++) {
+        if (data[i] && data[i][0] && data[i][0].toString().trim() !== "") {
+          hasUser = true;
+          break;
+        }
+      }
+
+      // Responder a la página web el estado real del servicio y si está libre la base de datos
+      return ContentService.createTextOutput(JSON.stringify({
+        serviceStatus: billingStatus, // Enviará "ACTIVO" o "SUSPENDIDO"
+        hasUser: hasUser
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Si el servicio está SUSPENDIDO en Sheets, bloquear cualquier intento de Login o Registro
+    if (billingStatus === "SUSPENDIDO") {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Acceso denegado: El servicio se encuentra suspendido." })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Validar campos obligatorios para las acciones de Login o Registro
+    if (!action || !user || !pass) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Por favor, complete los campos solicitados." })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Algoritmo matemático SHA-256 para cristalizar/encriptar las contraseñas
+    var encriptarClave = function(texto) {
+      var rawHash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, texto, Utilities.Charset.UTF_8);
+      var output = "";
+      for (var i = 0; i < rawHash.length; i++) {
+        var v = rawHash[i] & 0xff;
+        if (v < 16) output += "0";
+        output += v.toString(16);
+      }
+      return output;
+    };
+
+    var claveEncriptadaWeb = encriptarClave(pass);
+    var data = sheet.getDataRange().getValues();
+
+    // =========================================================================
+    // 📝 ACCIÓN: CONFIGURACIÓN INICIAL / REGISTRO ÚNICO (SETUP)
+    // =========================================================================
+    if (action === "setup") {
+      // Doble verificación de seguridad en el servidor: Verificar si ya hay un usuario guardado
+      for (var i = 1; i < data.length; i++) {
+        if (data[i] && data[i][0] && data[i][0].toString().trim() !== "") {
+          return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Acción inválida: Ya existe un administrador registrado." })).setMimeType(ContentService.MimeType.JSON);
+        }
+      }
+
+      // Insertar los datos del dueño por primera vez de forma encriptada
+      sheet.appendRow([user, claveEncriptadaWeb, new Date()]);
+      return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "¡Dueño registrado con éxito! Cerrando compuerta..." })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // =========================================================================
+    // 🔑 ACCIÓN: INICIAR SESIÓN TRADICIONAL (LOGIN)
+    // =========================================================================
+    if (action === "login") {
+      for (var i = 1; i < data.length; i++) {
+        var dbUser = data[i] && data[i][0] ? data[i][0].toString().toLowerCase().trim() : "";
+        var dbPass = data[i] && data[i][1] ? data[i][1].toString().trim() : "";
+
+        // Sub-caso de Recuperación Administrativa: Clave corta escrita a mano por ti en la celda
+        if (dbPass.length < 40 && dbPass !== "") {
+          if (dbUser === user.toLowerCase() && dbPass === pass) {
+            // Dar acceso, cristalizar la clave de inmediato en la celda para protegerla y guardar
+            sheet.getRange(i + 1, 2).setValue(claveEncriptadaWeb);
+            return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "¡Acceso correcto! Clave asegurada en la nube." })).setMimeType(ContentService.MimeType.JSON);
+          }
+        } else {
+          // Caso Estándar: Comparación de claves encriptadas SHA-256
+          if (dbUser === user.toLowerCase() && dbPass === claveEncriptadaWeb) {
+            return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "¡Acceso verificado! Redirigiendo..." })).setMimeType(ContentService.MimeType.JSON);
+          }
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "El usuario o la contraseña son incorrectos." })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Acción no reconocida por el sistema." })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Error técnico: " + error.toString() })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
